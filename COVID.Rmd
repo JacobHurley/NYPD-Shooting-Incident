@@ -1,0 +1,291 @@
+---
+title: "Covid"
+output: pdf_document
+date: "2025-07-20"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Summary
+In this project we will be looking at historical covid data to analyze effectiveness in preventative measures as well as effectiveness of treatments (hospital or vaccine). We will compare different states within the United States and their handling of this pandemic.
+
+
+## Load in Data
+We can load in our data from our covid dataset using a github repository. This dataset includes number of covid cases each day based on global country, as well as individual cases in the United States.
+
+
+```{r data loading}
+library(tidyverse)
+mainURL = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+fileNames = c("time_series_covid19_confirmed_US.csv",
+              "time_series_covid19_confirmed_global.csv",
+              "time_series_covid19_deaths_US.csv",
+              "time_series_covid19_deaths_global.csv")
+urls = str_c(mainURL, fileNames)
+confirmedUS = read.csv(urls[1])
+confirmedGlobal = read.csv(urls[2])
+deathsUS = read.csv(urls[3])
+deathsGlobal = read.csv(urls[4])
+```
+## Clean column names
+column dates begin with an X and use a "." instead of a "/" to seperate values, therefore we will transform these column names
+```{r clean column names}
+names(confirmedGlobal) = gsub("X", "", names(confirmedGlobal))
+names(confirmedGlobal) = gsub("\\.", "/", names(confirmedGlobal))
+
+names(deathsGlobal) = gsub("X", "", names(deathsGlobal))
+names(deathsGlobal) = gsub("\\.", "/", names(deathsGlobal))
+
+names(confirmedUS) = gsub("X", "", names(confirmedUS))
+names(confirmedUS) = gsub("\\.", "/", names(confirmedUS))
+
+names(deathsUS) = gsub("X", "", names(deathsUS))
+names(deathsUS) = gsub("\\.", "/", names(deathsUS))
+```
+
+## Clean Table
+We will then clean up our table to move all the dates into a single column with multiple rows for each data. This will allow us to perform arithmatic and graphing much easier than before. We will also add a population value to our global table in order to match our US table in case we perform comparisons.
+
+```{r cleanup}
+global_cases = confirmedGlobal %>%
+  pivot_longer(cols = -c(`Province/State`, `Country/Region`, Lat, Long), names_to = "date",
+               values_to = "cases") %>%
+  select(-c(Lat,Long))
+
+global_deaths = deathsGlobal %>%
+  pivot_longer(cols = -c(`Province/State`, `Country/Region`, Lat, Long), names_to = "date",
+               values_to = "deaths") %>%
+  select(-c(Lat,Long))
+
+global = global_cases %>%
+  full_join(global_deaths) %>%
+  rename(Country_Region = `Country/Region`, Province_State = `Province/State`) %>%
+  mutate(date = mdy(date))
+
+US_cases = confirmedUS %>%
+  pivot_longer(cols = -(UID:Combined_Key), names_to = "date",
+               values_to = "cases") %>%
+  select(Admin2:cases) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat, Long_))
+
+US_deaths = deathsUS %>%
+  pivot_longer(cols = -(UID:Population),
+               names_to = "date",
+               values_to = "deaths") %>%
+  select(Admin2:deaths) %>%
+  mutate(date = mdy(date)) %>%
+  select(-c(Lat, Long_))
+
+US = US_cases %>%
+  full_join(US_deaths)
+
+global = global %>%
+  unite("Combined_Key", 
+        c(Province_State, Country_Region),
+        sep = ", ",
+        na.rm = TRUE,
+        remove = FALSE)
+
+uid_lookup_url = "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/UID_ISO_FIPS_LookUp_Table.csv"
+
+uid = read_csv(uid_lookup_url) %>%
+  select(-c(Lat, Long_, Combined_Key, code3, iso2, iso3, Admin2))
+
+global = global %>%
+  left_join(uid, by= c("Province_State", "Country_Region")) %>%
+  select(-c(UID, FIPS)) %>%
+  select(Province_State, Country_Region, date, cases, deaths, Population, Combined_Key)
+```
+## Convert necessary columns to factors
+As many of the columns such as province, country, and combined key are large areas, we can convert these to factors instead of character values to perform analysis.
+```{r summaries global}
+global$Province_State = as.factor(global$Province_State)
+global$Country_Region = as.factor(global$Country_Region)
+global$Combined_Key = as.factor(global$Combined_Key)
+summary(global)
+```
+## US factor conversion
+We will perform the same transformation on our US table as we did our global table to ensure consistency between the two.
+```{r summaries US}
+US$Admin2 = as.factor(US$Admin2)
+US$Province_State = as.factor(US$Province_State)
+US$Country_Region = as.factor(US$Country_Region)
+US$Combined_Key = as.factor(US$Combined_Key)
+summary(US)
+```
+## Clean US data
+To first perform some analysis and visualization on the US data, we will exclude any rows where the cases or deaths are less than 0. This is because you can't have negative cases or negative deaths
+```{r data cleaning}
+US = US %>% filter(cases >= 0) %>% filter(deaths >=0)
+summary(US)
+```
+## Visualization 1
+Our first visualization will be to check the total number of cases in each state/territory over time.
+```{r data visualization}
+tempUS = US %>% group_by(Province_State, date) %>% summarise(value = sum(cases))
+
+tempUS %>% ggplot(aes(x = date, y = value)) +
+  geom_line(aes(color = Province_State)) +
+  geom_point(aes(color = Province_State)) +
+  scale_y_log10()
+```
+## Visualization 1 analysis
+From this initial graph we can see that there are a few problems. The first being that the graph is shrunk a lot to accomodate how many different colors there are, the second being the scale of the graph. So in this next block we will pick the 10 states (5 each) that had the most covid cases and the least covid cases
+
+```{r data analysis}
+highest_value_state = tempUS %>%
+  group_by(Province_State) %>%
+  filter(date == max(date)) %>%
+  filter(value == max(value)) %>%
+  ungroup() %>%
+  arrange(desc(value)) %>%
+  slice(1:5)
+highest_value_state
+
+lowest_value_state = tempUS %>%
+  group_by(Province_State) %>%
+  filter(date == max(date)) %>%
+  filter(value == min(value)) %>%
+  ungroup() %>%
+  arrange(value) %>%
+  slice(1:5)
+lowest_value_state
+```
+After finding the top 5 and bottom 5 states, we come accross another issue which is that for our states with the largest amount of cases, they happen to also be the largest states and have many highly densely populated cities. Therefore a better metric would be percent of population rather than just a raw count.
+
+```{r data analysis 2}
+tempUS = US %>% 
+  filter(Population > 0) %>% 
+  filter(Population >= cases) %>%
+  group_by(Province_State, date) %>% 
+  summarise(value = sum(cases) / sum(Population))
+
+highest_value_state = tempUS %>%
+  group_by(Province_State) %>%
+  filter(date == max(date)) %>%
+  filter(value == max(value)) %>%
+  ungroup() %>%
+  arrange(desc(value)) %>%
+  slice(1:5)
+
+highest_value_state
+
+lowest_value_state = tempUS %>%
+  group_by(Province_State) %>%
+  filter(date == max(date)) %>%
+  filter(value == min(value)) %>%
+  ungroup() %>%
+  arrange(value) %>%
+  slice(1:10)
+lowest_value_state
+```
+We can see that the highest percentage of state populations are states that were more inclined to ignore COVID preventative measures given by the CDC and the lower percentage areas are more territories than states. If we then plot our graph again with these 10 areas, we can compare better the differences in slopes. For this plot we will be using the top and bottom 3 instead because the graph still seems cluttered with 10 different colors.
+## Visualization 2
+```{r data visualization 2}
+tempUS = US %>% 
+  filter(Province_State %in% c('Alaska', 'Rhode Island', 'Kentucky',
+                               'American Samoa', 'Maryland', 'Oregon')) %>%
+  filter(Population > 0) %>% 
+  group_by(Province_State, date) %>% 
+  summarise(Percent = sum(cases) / sum(Population))
+
+tempUS %>% ggplot(aes(x = date, y = Percent)) +
+  geom_line(aes(color = Province_State)) +
+  geom_point(aes(color = Province_State)) +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) + labs(title = "Percent of State Infected over time")
+```
+## Visualization 2 Analysis
+We can see that the states that handles COVID better were able to mitigate the spread at an earlier point in time than other states which stopped the normal almost exponential spread. Another case we should look at is the death rate and whether the highest death percentage happened in the same states. For our first graph we will look at death/Population, however death/cases may be a different metric for how well treatment is once an individual contracted COVID.
+
+```{r death comparison}
+tempUS = US %>% 
+  filter(Population > 0) %>% 
+  filter(Population >= cases) %>%
+  group_by(Province_State, date) %>% 
+  summarise(value = sum(deaths) / sum(Population))
+
+highest_value_state = tempUS %>%
+  group_by(Province_State) %>%
+  filter(date == max(date)) %>%
+  filter(value == max(value)) %>%
+  ungroup() %>%
+  arrange(desc(value)) %>%
+  slice(1:5)
+
+highest_value_state
+
+lowest_value_state = tempUS %>%
+  group_by(Province_State) %>%
+  filter(date == max(date)) %>%
+  filter(value == min(value)) %>%
+  ungroup() %>%
+  arrange(value) %>%
+  slice(1:10)
+lowest_value_state
+```
+## Analysis 3
+Because the death rate for the population is so miniscule (less than a percent on the high end), and it would be disingenuous to scale these values to see a distinguishable difference in a meaningful way, we will instead graph the death vs cases to see how treatment effectiveness was for each state.
+```{r data visualization 3}
+tempUS = US %>% 
+  filter(Population > 0) %>% 
+  filter(Population >= cases) %>%
+  group_by(Province_State, date) %>% 
+  summarise(value = sum(deaths) / sum(cases))
+
+highest_value_state = tempUS %>%
+  group_by(Province_State) %>%
+  filter(date == max(date)) %>%
+  filter(value == max(value)) %>%
+  ungroup() %>%
+  arrange(desc(value)) %>%
+  slice(1:5)
+
+highest_value_state
+
+lowest_value_state = tempUS %>%
+  group_by(Province_State) %>%
+  filter(date == max(date)) %>%
+  filter(value == min(value)) %>%
+  ungroup() %>%
+  arrange(value) %>%
+  slice(1:10)
+lowest_value_state
+```
+## Visualization 3
+We can plot the death rate by number of cases to see if over time we decrease the amount of individuals dying from COVID. If the rate goes down than we can assume that our treatment is better than what it was initially.
+```{r visualization 4}
+tempUS = US %>% 
+  filter(Province_State %in% c('Pennsylvania', 'Michigan', 'Georgia',
+                               'Northern Mariana Islands', 'American Samoa', 'Utah')) %>%
+  filter(Population > 0) %>% 
+  filter(Population >= cases) %>%
+  group_by(Province_State, date) %>% 
+  summarise(Percent = sum(deaths) / sum(cases))
+
+tempUS %>% ggplot(aes(x = date, y = Percent)) +
+  geom_line(aes(color = Province_State)) +
+  geom_point(aes(color = Province_State)) +
+  theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) + labs(title = "Percent of State Infected over time")
+```
+## Visualization 3 Analysis
+We can see that while the death percentage was high initially, as we developed treatment it dropped significantly in every area. This leads us to believe that the treatments developed (once hospitalized or from spread of the vaccine) was effective in lowering the death rate, however this is an assumption and is not the conclusive cause.
+
+## Model
+We can create a simple linear regression model to predict the number of deaths based on the number of cases of covid and population of the state.
+```{r model creation}
+tempUS = US %>% 
+  filter(Population > 0) %>% 
+  filter(Population >= cases) %>%
+  group_by(Province_State, date) %>% 
+  summarise(deaths = sum(deaths), cases= sum(cases), Population = sum(Population))
+
+model = lm(deaths ~ cases + Population, data = tempUS)
+summary(model)
+```
+## Model Conclusion
+We see that all coefficients are significant. This is most likely because as we saw from our visualizations, the death rate was fairly consistent once treatment was found even between different states. If this value was drastically different from state to state, these 2 values may not be significant and we would want to add the state/province factor to account for these differences.
+
+## Bias
+One of the main areas that bias could be introduced includes data reporting. In our dataset, there were negative values for cases and deaths which we left out. While we removed these, there may be other false values in the dataset that skews our results. There may also be false reporting or double counts of individuals that contracted COVID to raise the number of cases. Lastly, this dataset can not know the true number because there may be many people that contracted COVID and did not get tested at a facility that reports it, but rather had a take home test and remained in isolation.
