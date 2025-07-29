@@ -1,0 +1,114 @@
+---
+title: "NYPD Shooting Incident Data Report"
+output: pdf_document
+date: "2025-07-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Goal of project
+The goal of this project is to determine if there are any factors within the NYPD shooting incident dataset that would allow us to predict whether an individual is murdered or not. We will look to discover interesting trends on how shootings change over years and by different groups such as location.
+
+
+## Load the data
+This block of code is to load the city of New York shooting incident dataset into local memory. The New York shooting incident dataset is a dataset that contains information about shooting incidents in the New York area including Data, location, victim and perpetrator characteristics, and if they were murdered or not.
+
+```{r loadData}
+url = 'https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD'
+data = read.csv(url)
+```
+
+```{r summary, echo=FALSE}
+summary(data)
+```
+## Clean The Data
+This block of code will clean the data by converting character types into factors where applicable and removing columns with duplicated values such as lon_lat, x_coord, and y_coord because they are already defined in the lat and lon columns.
+```{r clean Data}
+data$OCCUR_DATE = as.Date(data$OCCUR_DATE)
+data$OCCUR_TIME = as.character(data$OCCUR_TIME)
+data$BORO = as.factor(data$BORO)
+data$LOC_OF_OCCUR_DESC = as.factor(data$LOC_OF_OCCUR_DESC)
+data$LOC_CLASSFCTN_DESC = as.factor(data$LOC_CLASSFCTN_DESC)
+data$LOCATION_DESC = as.factor(data$LOCATION_DESC)
+data$STATISTICAL_MURDER_FLAG = as.factor(data$STATISTICAL_MURDER_FLAG)
+data$PERP_AGE_GROUP = as.factor(data$PERP_AGE_GROUP)
+data$PERP_SEX = as.factor(data$PERP_SEX)
+data$PERP_RACE = as.factor(data$PERP_RACE)
+data$VIC_AGE_GROUP = as.factor(data$VIC_AGE_GROUP)
+data$VIC_SEX = as.factor(data$VIC_SEX)
+data$VIC_RACE = as.factor(data$VIC_RACE)
+data = subset(data, select = -c(Lon_Lat, X_COORD_CD, Y_COORD_CD)) # we will drop these columns because they provide duplicate information, we will not be dropping INCIDENT_KEY as it is an identifying key for each input.
+```
+
+## Summary Check
+This block of code will check that we have correctly converted all data types to the necessary types as well as the number of values in each including null values.
+```{r check}
+summary(data)
+# Because we are using this data for visualizations, we can treat the null values as their own value. If we were running machine learning models on the data however we would have to fill the null values with numeric values for training.
+```
+
+## Shooting over Time Visualizations
+We will be plotting the number of shooting incidents per year and month to determine if there is any abnormalities or increases throughout different periods of time.
+```{r Shooting over Time}
+barplot(table(format(data$OCCUR_DATE, "%Y")),
+        main = "Number of shootings per year",
+        xlab = "Year from 2000",
+        ylab = "Number of shootings in year",
+        col = "blue")
+barplot(table(format(data$OCCUR_DATE, "%b")),
+        main = "Number of shootings per Month",
+        xlab = "Month",
+        ylab = "Number of total shootings per month",
+        col = "blue")
+```
+
+## Analysis
+While the earlier visualizations were great for getting an overall understanding, the main problem that we would like to look at as well is if there are more murders over the years as well as in each BORO.
+```{r analysis}
+library(ggplot2)
+library(dplyr)
+temp = data
+temp = temp %>% filter(!is.na(OCCUR_DATE))
+temp$Year = format(temp$OCCUR_DATE, "%Y")
+
+temp = temp %>% 
+  group_by(Year, STATISTICAL_MURDER_FLAG) %>%
+  summarise(Count = n())
+
+ggplot(temp, aes(x = Year, y = Count, color = STATISTICAL_MURDER_FLAG, group = STATISTICAL_MURDER_FLAG)) +
+  geom_line(size = 1.2) +
+  geom_point(size = 3) +
+  labs(title = "Counts per Year by Murdered Status", x = "Year", y = "Count")
+```
+```{r analysis2}
+temp = data
+temp = temp %>% filter(!is.na(BORO))
+
+temp = temp %>% 
+  group_by(BORO, STATISTICAL_MURDER_FLAG) %>%
+  summarise(Count = n())
+
+ggplot(temp, aes(x = BORO, y = Count, fill = STATISTICAL_MURDER_FLAG)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Counts per BORO by Murdered Status", x = "BORO", y = "Count") +
+  theme_minimal()
+```
+We can see that Most of the shootings occur in the Bronx and Brooklyn BOROs as well as the most murders.
+
+
+## Model
+This block of code will attempt to model the relationship between predictors such as Boro, Victim age group, Victim Sex, and the year and our response variable murder flag.We will be using a logistic regression model because the murder flag predictor is a binary variable.
+```{r model}
+temp = data
+temp = temp %>% filter(!is.na(OCCUR_DATE))
+temp$Year = as.numeric(format(temp$OCCUR_DATE, "%Y"))
+model = glm(STATISTICAL_MURDER_FLAG ~ BORO + VIC_AGE_GROUP + VIC_SEX + Year, data = temp, na.action=na.omit, family = binomial(link='logit'))
+summary(model)
+```
+
+## Conclusion
+We can see that the significant p values are mostly in the victim age group which leads us to believe that this plays the biggest part in understanding if someone is murdered or not.
+
+## BIAS
+In our model I excluded some predictors that others may use due to reporting bias. I excluded predictors that included perpetrator characteristics to avoid generalized false assumptions, however bias will still be present due to the many null values in our dataset. The values may be null due to individuals not wanting to report full details.
